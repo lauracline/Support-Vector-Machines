@@ -1,0 +1,840 @@
+---
+title: "Support Vector Machines"
+author: "Laura Cline"
+date: "06/11/2021"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We use the `e1071` library in `R` to demonstrate the support vector classifier and the support vector machine (SVM). Another option is the `LiblineaR` library, which is useful for very large linear problems. 
+
+```{r}
+rm(list = ls(all=TRUE))
+```
+
+```{r}
+libs <- c("tidyverse", "ISLR", "modelr", "e1071", "ROCR")
+invisible(lapply(libs, library, character.only=TRUE))
+```
+
+This lab primarily focuses on creating and tweaking a variety of Support Vector Classifiers using the `e1071` library. The text mentions the avaliability of the `LiblineaR` library for very large linear problems, but we will not use it in this lab. We conclude the lab with a discussion/implementation of ROC curves using the `ROCR` library. The topics that will be covered in this lab include:
+
+* Support Vector Classifiers
+
+* Support Vector Machines (SVM)
+
+* ROC Curves
+
+* SVMs with K > 2 Classes
+
+# Support Vector Classifier 
+
+The `e1071` library contains implementations for a number of statistical learning methods. In particular, the `svm()` function can be used to fit a support vector classifier when the argument `kernel = "linear"` is used. This function uses a slightly different formulation for the support vector classifier. A `cost` argument allows us to specify the cost of a violation to the margin. When the `cost` argument is small, then the margins will be wide and many support vectors will be on the margin or will biolate the margin. When the `cost` argument is large, then the margins will be narrow and there will be few support vectors on the margin or violating the margin. 
+
+We now use the `svm()` function to fit the support vector classifier for a given value of the `cost` parameter. Here, we demonstrate the use of this function on a two-dimensional example so that we can plot the resulting decision boundary. We begin by generating the observations, which belong to two classes, and checking whether the classes are linearly separable. 
+
+```{r}
+# Set up the toy data to work with
+set.seed(1)
+
+dat <- tibble(
+  x1 = rnorm(500),
+  x2 = rnorm(500),
+  y = factor(c(rep('A', 250), (rep('B',250))))
+)
+```
+
+```{r}
+# Add a little separability between the classes
+dat$x1[dat$y == 'A'] <- dat$x1[dat$y == 'A'] + 5
+
+# Check to see if classes are linearly seperable
+ggplot(dat, aes(x1, x2, col=y)) +
+  geom_jitter()
+```
+
+Next, we fit the support vector classifier. Note that in order for the `svm()` function to perform classification (as opposed to SVM-based regression), we must encode the response as a factor variable. We now create a data frame with the response coded as a vector. 
+
+Now that we've created our toy data and can clearly see they are not linearly seperable, let's fit the support vector classifier. Note that we need to make sure that `y` is encoded as a factor variable in our formula. We set the `cost` argument to 10 in this example as well (default is 1). 
+
+```{r}
+svc <- svm(y ~ ., data=dat, kernel='linear',
+           cost = 10, scale = FALSE)
+plot(svc, dat)
+
+summary(svc)
+```
+
+The argument `scale = FALSE` tells the `svm()` function not to scale each feature to have mean zero or standard deviation one; depeneding on the application, one might prefer to use `scale=TRUE`. 
+
+We can plot the support vector classifier obtained. 
+
+Note that the two arguments in the `plot.svm()` function are the output of the call to `svm()`, as well as the data used in the call to `svm()`. The region of feature space that will be assigned to the -1 class is shown in red, and region that will be assigned the +1 class is shown in yellow. The decision boundary between the two classes is linear (because we used the argument `kernel = "linear"`), though due to the way in which the plotting function is implemented in the library the decision boundary looks somewhat jagged in the plot. Note that here the second feature is plotted on the x-axis and the first feature is plotted on the y-axis, in contrast to the behaviour of the usual `plot()` function in `R`. The support vectors are plotted as crosses and the remaining observations are plotted as circles; we see here that there are ten support vectors. We can determine their identities as follows:
+
+```{r}
+svc$index
+```
+
+We can obtain some basic information about the support vector classifier fit using the `summary()` command. 
+
+This tells us that a linear kernel was used with `cost=10`, and that there are 10 support vectors, 5 in one class and 5 in the other. 
+
+Our support vector classifier works pretty well (as it shou,d the data was made to be very easily separated). Upon closer inspection, we see that there are 10 support vectors, 5 from each class. You will notice that these 10 support vectors are plotted as crosses on the above graph, and everything is left as an open circle. 
+
+What if we instead used a smaller value of the cost parameter?
+
+With a smaller cost parameter, our decision boundary gets a little more rigid and will allow for fewer errors in the training set. In sort - smaller margins, fewer support vectors. 
+
+```{r}
+svc2 <- svm(y ~ ., data=dat, kernel = 'linear',
+            cost = 1, scale = FALSE)
+
+summary(svc2)
+```
+
+Note that a smaller value of the cost parameter is being used, we obtain a larger number of support vectors, because the margin is now wider. Unfortunately, the `svm()` function does not explicitly output the coefficients of the linear decision boundary obtained when the support vector classifier is fit, nor does it output the width of the margin. 
+
+The `e1071` library includes a built-in function, `tune()`, to perform cross-validation. By default, `tune()` performs ten-fold cross-validation on a set of models of interest. In order to use this function, we pass in relevant information about the set of models that are under consideration. The following command indicates that we want to compare SVMs witha  linear kernel, using a range of values of the `cost` parameter. 
+
+How do we determine the best cost parameter to use? You should know by now that cross-validation is pretty much the answer to every parameter-tuning problem. Luckily, the `e1071` library contains the `tune()` function, which will allow us to perform 10-fold cross-validation over a range of cost parameters. 
+
+```{r}
+svc_cv <- tune(svm, y ~ ., data=dat, kernel='linear',
+               ranges = list(cost = c(0.001, 0.01, 1, 5, 10, 100)))
+```
+
+`tune()` returns an object of class `tune`, which contains results from the 10-fold CV, including the best performing parameter values and their respective errors (`best.parameters`, `best.performance`), a data frame of all parameter combinations and their corresponding results (`performances`).
+
+We can easily access the cross-validation errors for each of these models using the `summary()` command. 
+
+We'll take a glance at these components and check the results of our best-performing cross-validated model. 
+
+```{r}
+summary(svc_cv)
+```
+
+We can see that `cost = 5` results in the lowest cross-validation error rate. The `tune()` function stores the best model obtained, which can be accessed as follows:
+
+```{r}
+best <- svc_cv$best.model
+summary(best)
+```
+
+The `predict()` function can be used to predict the class label on a set of test observations, at any given value of the cost parameter. We begin by generating the test dataset.
+
+Now that we have a working model, let's generate some test data. Keep in mind that we are making our own data to have a pretty well-defined class boundary, so our test error should be practically nil (and it is, as you'll see). 
+
+```{r}
+# Change the seed so we don't get the exact same data 
+set.seed(2)
+
+test <- tibble(
+  x1 = rnorm(500),
+  x2 = rnorm(500),
+  y = factor(c(rep('A', 250), (rep('B',250))))
+)
+
+# Add the exact same amount of separability between the classes
+test$x1[test$y == 'A'] <- test$x1[test$y == 'A'] + 5
+```
+
+Now we predict the class labels of these test observations. Here we use the best model obtained through cross-validation in order to make predictions. 
+
+```{r}
+# Make predictions
+predictions <- predict(best, test)
+table(predictions, truth = test$y)
+```
+
+Thus, with the value of `cost`, 498 of the test observations are correctly classified. 
+
+# Support Vector Machine 
+
+In order to fit an SVM using a non-linear kernel, we once again use the `svm()` function. However, now we use a different value of the parameter `kernel`. To fit an SVM with a polynomial kernel, we use `kernel = "polynomial"`, and to fit an SVM with a radial kernel, we use `kernel = "radial"`. In the former case, we also use the `degree` argument to specify a degree for the polynomial kernel and in the latter case we use `gamma` to specify a value of $\gamma$ for the radial basis kernel. 
+
+This section is mostly going to be an extension of the previous one, only now we are learning how to use different kernels. In particular, we will do one example with a radial kernel and another with a polynomial kernel. We begin by creating the sample data. 
+
+We first generate some data with a non-linear class boundary, as follows:
+
+```{r}
+# Set up toy data to work with
+set.seed(1)
+dat <- tibble(
+  x1 = rnorm(500),
+  x2 = rnorm(500),
+  y = factor(c(rep('A',250), (rep('B',250))))
+)
+# Add a little of separability between the classes
+dat$x1[dat$y == "A"] <-  dat$x1[dat$y == "A"] + 3
+```
+
+Plotting the data makes it clear that the class boundary is indeed non-linear:
+
+```{r}
+ggplot(dat, aes(x1, x2, col=y)) +
+  geom_jitter()
+```
+
+The data is randomly split into training and testing groups. We then fit the training data using the `svm()` function with a radial kernel and $\gamma$ = 1:
+
+```{r}
+train <- dat %>%
+  sample_frac(0.5)
+
+test <- setdiff(dat, train)
+```
+
+```{r}
+rad_kern <- svm(y ~ ., data=train, kernel = 'radial', 
+                gamma = 1, cost = 1)
+plot(rad_kern, train)
+```
+
+The plot shows that the resulting SVM has a decidedly non-linear boundary. The `summary()` function can be used to obtain some information about the SVM fit:
+
+```{r}
+summary(rad_kern)
+```
+
+We can see from the figure that there are a fair number of training errors in this SVM fit. If we increase the value of `cost`, we can reduce the number of training errors. However, this comes at a price of a more irregular decision boundary that seems to be at risk of overfitting the data. 
+
+We can perform cross-validation using `tune()` to select the best choice of $\gamma$ and `cost` for a SVM with a radial kernel. Then, we can check how well those parameter values perform on the training set.
+
+```{r}
+rad_cv <- tune(svm, y ~ ., data = train, kernel = 'radial',
+               ranges = list(cost = c (0.1, 1, 10, 100, 1000),
+                             gamma = c (0.5, 1, 2, 3, 4)))
+```
+
+```{r}
+summary(rad_cv)
+```
+
+Therefore, the best choice of parameters involves `cost = 0.1` and `gamma = 0.5`. We can view the test set predictions for this model by applying the `predict()` function to the data. Notice that to do this we subset the dataframe `dat` using `-train` as an index set. 
+
+```{r}
+table(prediction = predict(rad_cv$best.model),
+      actual = train$y)
+```
+
+6% of test observations are misclassified by this SVM. 
+
+We'll just quickly run the same analysis with a polynomial kernel so we can compare the results. 
+
+```{r}
+poly_cv <- tune(svm, y ~ ., data=train, kernel='polynomial',
+                ranges = list(cost = c(0.1, 1, 10, 100, 1000),
+                              degree = c(2, 3, 4)))
+```
+
+```{r}
+table(prediction = predict(poly_cv$best.model),
+      actual = train$y)
+```
+
+# ROC Curves
+
+The `ROCR` package can be used to produce ROC curves. We first write a short function to plot an ROC curve given a vector containing a numerical score for each observations, `pred`, and a vector containing the class label for each observation, `truth`. 
+
+In order to produce ROC curves from SVM fits, we need to extract the fitted decision values by setting `decision.values = T` in `svm()`. Once we have that, we use the `ROCR` library to help us build the curves. 
+
+For this example, we create the ROC curves using the training data because it is slightly less effort. 
+
+```{r}
+rocplot=function(pred, truth, ...){
+  predob = prediction(pred, truth)
+  perf = performance(predob , "tpr", "fpr")
+  plot(perf ,...)
+  }
+```
+
+SVMs and support vector classifiers output class labels for each observations. However, it is also possible to obtain *fitted values* for each observation, which are the numerical scores used to obtain the class labels. For instance, in the case of a support vector classifier, the fitted value for an observation $X = (X_{1}, X_{2},...,X_{p})^{T}$ takes the form $\hat{\beta}_{0} + \hat{\beta}_{1}X_{1} + \hat{\beta}_{2}X_{2} + ... + \hat{\beta}_{p}X_{p}$. In essence, the sign of the fitted value determines on which side of the decision boundary the observation lies. Therefore, the relationship between the fitted value and the class prediction for a given observation is simple: if the fitted value exceeds zero then the observation is assigned to one class, and if it is less than zero then it is assigned to another. In order to obtain the fitted values for a given SVM model fit, we use `decision.values=TRUE` when fitting `svm()`. Then the `predict()` function will output the fitted values. 
+
+```{r}
+# Run the first SVM and observe ROC performance 
+svm_roc <- svm(y ~ ., data = train, kernel = 'radial',
+               gamma = 0.5, cost = 0.1, decision.values = T)
+
+fitted <- svm_roc$decision.values
+```
+
+Now, we can produce the ROC plot. 
+
+```{r}
+perform <- prediction (fitted, train$y) %>%
+  performance(., 'tpr', 'fpr')
+
+original <- tibble(x = unlist(perform@x.values),
+                   y = unlist(perform@y.values))
+
+ggplot(original, aes(x, y)) +
+  geom_line()
+```
+
+SVM appears to be producing accurate predictions. By increasing $\gamma$, we can produce a more flexible fit and generate further improvements in accuracy. 
+
+```{r}
+# Rerun SVM with more liberal gamma values
+svm_roc2 <- svm(y ~ ., data=train, kernel='radial',
+                gamma = 50, cost = 0.1, decision.values = T)
+
+fitted2 <- svm_roc2$decision.values
+
+perform2 <- prediction(fitted2, train$y) %>%
+  performance(., 'tpr', 'fpr')
+
+high_gamma <- tibble(x = unlist(perform2@x.values),
+                   y = unlist(perform2@y.values))
+```
+
+```{r}
+# Graphically compare the two models
+bind_rows("original" = original, "adjusted gamma" = high_gamma, .id = "Model") %>%
+  ggplot(., aes(x, y, col=Model)) +
+  geom_line()
+```
+
+However, these ROC curves are all on the training data. We are really more interested in the level of prediction accuracy on the test data to get more accurate results. 
+
+# SVM With Multiple Classes (K > 2 Classes)
+
+If the response is a factor containing more than two levels, then the `svm()` function will perform multi-class classification using the one-versus-one approach. We explore that setting here by generating a third class of observations. 
+
+When our dependent variable is categorical with more than two classes, `svm()` will perform classification using the one-versus-one approach. Recall that this requires $K \choose {2}$ SVMs for each possible comparison, so it might be kind of slow. 
+
+```{r}
+# Create the sample data
+set.seed(1)
+dat <- tibble(
+  x1 = rnorm(600),
+  x2 = rnorm(600),
+  y = factor(c(rep('A', 200), rep('B', 200), rep('C', 200)))
+)
+```
+
+```{r}
+# Artificially add separability between the classes
+dat$x1[dat$y == "A"] <- dat$x1[dat$y == "A"] + 5
+dat$x1[dat$y == "B"] <- dat$x1[dat$y == "B"] - 5
+```
+
+```{r}
+ggplot(dat, aes(x1, x2, col=y)) +
+  geom_jitter()
+```
+
+Now we fit an SVM to the data:
+
+```{r}
+multi_class <- svm(y ~ ., data=dat, kernel = 'radial', cost = 10, gamma = 1)
+plot(multi_class, dat)
+```
+
+The `e1071` library can be used to perform support vector regression, if the response vector is passed in to `svm()` is numerical rather than a factor. 
+
+# Application to Gene Expression Data
+
+We now examine the `Khan` dataset, which consists of a number of tissue samples corresponding to four distinct types of small round blue cell tumours. For each tissue sample, gene expression measurements are avaliable. The dataset consists of training data, `xtrain` and `ytrain`, and testing data, `xtest` and `ytest`. 
+
+We examine the dimension of the data:
+
+```{r}
+names(Khan)
+```
+
+```{r}
+dim(Khan$xtrain)
+```
+
+```{r}
+dim(Khan$xtest)
+```
+
+The dataset consists of expression measurements for 2,308 genes. The training and test set consist of 62 and 20 observations respectively. 
+
+```{r}
+table(Khan$ytrain)
+```
+
+```{r}
+table(Khan$ytest)
+```
+
+We will use a support vector approach to predict cancer subtype using gene expression measurements. In this dataset, there are a very large number of features relative to the number of observations. This suggests that we should use a linear kernel, because the additional flexibility that will result from using a polynomial or radial kernel is unnecessary. 
+
+```{r}
+dat = data.frame(x = Khan$xtrain, y = as.factor(Khan$ytrain))
+```
+
+```{r}
+out = svm(y ~ ., data=dat, kernel='linear', cost=10)
+summary(out)
+```
+
+```{r}
+table(out$fitted, dat$y)
+```
+
+We can see that there are *no* training errors. In fact, this is not surprising because the large number of variables relative to the number of observations implies that it is easy to find hyperplanes that fully separate the classes. We are most interested not in the support vector classifier's performance on the training observations, but rather its performance on the test observations. 
+
+```{r}
+dat.te = data.frame(x = Khan$xtest, y = as.factor(Khan$ytest))
+
+pred.te = predict(out, newdata=dat.te)
+
+table(pred.te, dat.te$y)
+```
+
+We can see that using `cost=10` yields twotest errors on this data.
+
+# Excercises 
+
+## Question Three
+
+Here we explore the maximal margin classifier on a toy dataset. 
+
+A. We are given *n* = 7 observations in *p* = 2 dimensions. For each observation, there is an associated class label. Sketch the observations. 
+
+```{r}
+set.seed(0)
+
+DF = data.frame(x1 = c(3, 2, 4, 1, 2, 4, 4), x2 = c(4, 2, 4, 4, 1, 3, 1), y = as.factor(c(rep(1,4),rep(0,3))))
+colours = c(rep('red', 4), rep('blue',3)) 
+```
+
+B. Sketch the optimal separating hyperplane, and provide the equation for this hyperplane. 
+```{r}
+# Use the svm code to find the linear boundary (take the cost of a margin violation to be very large):
+svm.fit = svm(y ~ ., data=DF, kernel="linear", cost=1e6, scale=FALSE)
+print(summary(svm.fit))
+
+```
+
+The three support vectors for the maximal margin classifier are:
+
+```{r}
+svm.fit$index
+```
+
+```{r}
+plot(svm.fit, DF)
+```
+
+Use the output from `svm.fit` to compute/extract the linear decision boundary. It's based on the decomposition:
+
+$f(x) = \beta_{0} + ]sum_{i \in S} \alpha_{i} < x, x_{i}$
+
+given in the test and using the results from the `svm` call to get the support vectors via "index".
+
+C. Describe the classification rule for the maximal margin classifier. It should be something along the lines of "Classify to Red if $\beta_{0} + \beta_{1}X_{1} + \beta_{2}X_{2} > 0, and classify to Blue otherwise." Provide the values for $\beta_{0}$, $\beta_{1}$ and $\beta_{2}$. 
+
+```{r}
+beta_0 = svm.fit$coef0
+beta_x1 = sum(svm.fit$coefs * DF[svm.fit$index,]$x1)
+beta_x2 = sum(svm.fit$coefs * DF[svm.fit$index,]$x2)
+beta_0
+beta_x1
+beta_x2
+```
+
+D. On your sketch, indicate the margin for the maximal margin hyperplane. 
+
+```{r}
+# Plot the decision boundary with:
+#abline(a = -beta_0/ beta_x1, b = -beta_x2/beta_x1)
+```
+
+```{r}
+# From a plot of the points the decision boundary is given by the line with:
+slope = (3.5 - 1.5) / (4 - 2)
+intercept = -2 * slope + 1.5
+```
+
+```{r}
+# Compute the two margin lines:
+slope_m_upper = slope
+intercept_m_upper = -2 * slope_m_upper + 2
+```
+
+```{r}
+slope_m_lower = slope
+intercept_m_lower = -2 * slope_m_lower + 1
+```
+
+```{r}
+plot(DF$x1, DF$x2, col=colours, pch=19, cex=2, xlab = "X_1", ylab = "X_2", main = "")
+grid()
+```
+
+```{r}
+plot(DF$x1, DF$x2, col=colours, pch=19, cex=2, xlab = "X_1", ylab = "X_2", main = "")
+abline(a = intercept, b = slope, col="black")
+abline(a = intercept_m_upper, b = slope_m_upper, col="gray", lty = 2, lwd = 2)
+abline(a = intercept_m_lower, b = slope_m_lower, col="gray", lty=2, lwd=2)
+grid()
+```
+
+## Question Five
+
+We have seen we can fit an SVM with a non-linear kernel in order to perform classification using a non-linear decision boundary. We will now see that we can also obtain a non-linear decision boundary by performing logistic regression using non-linear transformations of the features. 
+
+A. Generate a dataset with *n* = 500 and *p* = 2, such that the observations belong to two classes with a quadratic decision boundary between them. 
+
+```{r}
+n = 500
+p = 2
+
+x1 = runif(n) - 0.5
+x2 = runif(n) - 0.5
+y = 1 * (x1^2 - x2^2 > 0)
+ DF = data.frame(x1 = x1, x2 = x2, y = as.factor(y))
+```
+
+B. Plot the observations, coloured according to their class labels. Your plot should display $X_{1}$ on the x-axis and $X_{2}$ on the y-axis. 
+
+```{r}
+plot(x1, x2, col=(y+1), pch=19, cex = 1.05, xlab = "x1", ylab = "x2", main = "initial data")
+grid()
+```
+
+C. Fit a logistic regression model to the data, using $X_{1}$ and $X_{2}$ as predictors. 
+
+```{r}
+m = glm(y ~ x1 + x2, data=DF, family=binomial)
+summary(m)
+```
+
+D. Apply this model to the *training data* in order to obtain a predicted class label for each training observation. Plot the observations, coloured according to *predicted* class labels. The decision boundary should be linear. 
+
+```{r}
+# Predict the class label of the training data
+# When type = "response" in predict, we output probabilities
+y_hat = predict(m, newdata=data.frame(x1=x1, x2=x2), type="response")
+predicted_class = 1 * (y_hat > 0.5)
+print(sprintf("Linear logistic regression training error rate = %10.6f", 1 - sum(predicted_class == y)/length(y)))
+```
+
+```{r}
+plot(x1, x2, col=(predicted_class + 1), pch=19, cex=1.05, xlab = 'x1', ylab = 'x2', main = "logistic regression: y ~ x1 + x2")
+grid()
+```
+
+E. Now fit a logistic regression model to the data using non-linear functions of $X_{1}$ and $X_{2}$ as predictors (e.g., $X_{1}^{2}$, $X_{1}$ x $X_{2}$, log($X_{1}$), and so forth).
+
+```{r}
+m = glm(y ~ x1 + x2 + I(x1^2) + I(x2^2) + I(x1*x2), data=DF, family="binomial")
+```
+
+F. Apply this model to the *training data* in order to obtain a predicted class label for each training observation. Plot the observations, coloured according to the *predicted* class labels. The decision boundary should be obviously non-linear. If it is not, repeat A to E until you come up with an example in which the predicted class labels are obviously non-linear. 
+
+```{r}
+y_hat = predict(m, newdata=data.frame(x1=x1, x2=x2), type="response")
+predicted_class = 1 * (y_hat > 0.5)
+print(sprintf("Non-linear logistic regression training error rate = %10.6f", 1 - sum(predicted_class == y)/length(y)))
+```
+
+```{r}
+plot(x1, x2, col=(predicted_class+1), pch=19, cex=1.05, xlab = 'x1', ylab = 'x2')
+grid()
+```
+
+G. Fit the support vector classifier to the data with $X_{1}$ and $X_{2}$ as predictors. Obtain the class prediction for each training observation. Plot the observations, coloured according to the *predicted class labels*. 
+
+```{r}
+# Fit the linear SVM to the data and report the error rate:
+dat = data.frame(x1=x1, x2=x2, y=as.factor(y))
+```
+
+```{r}
+# Do CV to select the value of cost using the "tune" function:
+tune.out = tune(svm, y ~ ., data=dat, kernel="linear",
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000)))
+print(summary(tune.out)) # Use this output to select the optimal cost value
+```
+
+```{r}
+# The best model is stored in "tune.out$best.model"
+print(tune.out$best.model)
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=data.frame(x1=x1, x2=x2))
+y_hat = as.numeric(as.character(y_hat)) # Convert factor responses into numerical values
+print(sprintf("Linear SVM training error rate = %10.6f", 1 - sum(y_hat == y)/length(y)))
+```
+
+```{r}
+plot(x1, x2, col=(y_hat + 1), pch=19, cex = 1.05, xlab = "x1", ylab="x2")
+grid()
+```
+
+H. Fit a SVM using a non-linear kernel to the data. Obtain a class prediction for each training observation. Plot the observations, coloured according to their *predicted class labels*. 
+
+```{r}
+# Fit a linear SVM to the data and report the error rate
+# Do CV to select the value of cost using the "tune" function:
+tune.out = tune(svm, y ~ ., data=dat, kernel="radial",
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000),
+                              gamma = c(0.5, 1, 2, 3, 4)))
+
+print(summary(tune.out)) # Use this output to select the optimal cost value
+```
+
+```{r}
+# The best model is stored in "tune.out$best.model"
+print(tune.out$best.model)
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=data.frame(x1=x1, x2=x2))
+y_hat = as.numeric(as.character(y_hat)) # Convert factor responses into numerical values
+print(sprintf("Nonlinear SVM training error rate = %10.6f", 1 - sum(y_hat == y)/length(y)))
+```
+
+```{r}
+plot(x1, x2, col=(y_hat+1), pch=19, cex = 1.05, xlab = 'x1', ylab = 'x2')
+grid()
+```
+
+## Question Six
+
+It is claimed that in the case of data that is just barely linearly separable, a support vector classifier with a small value of `cost` that misclassifies a couple of training observations may perform better on test data than one with a huge value of `cost` that does not misclassify any training observations. You will now investigate the claim. 
+
+A. Generate two-class data with *p* = 2 in such a way that the classes are barely linearly separable. 
+
+```{r}
+set.seed(1)
+
+x = matrix(rnorm(20*2), ncol=2)
+y = c(rep(-1,10), rep(+1,10))
+x[y==1,] = x[y==1,] +1
+x[y==1,] = x[y==1,] + 0.5
+```
+
+```{r}
+plot(x[,1], x[,2], col=(y+3), pch=19, cex=1.25, xlab="x1", ylab="x2", main="initial data")
+grid()
+```
+
+B. Compute the cross-validation error rates for support vector classifiers with a range of `cost` values. Gow many training errors are misclassified for each value of `cost` considered, and how does this relate to the cross-validation error obtained?
+
+```{r}
+dat = data.frame(x1 = x[,1], x2 = x[,2], y=as.factor(y))
+
+tune.out = tune(svm, y ~ ., data=dat, kernel="linear",
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000)))
+print(summary(tune.out)) # Use this output to select the optimal cost value
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=dat)
+y_hat = as.numeric(as.character(y_hat)) # Convert factor responses into numerical values
+print(sprintf("Linear SVM train error rate = %10.6f", 1 - sum(y_hat == y)/length(y)))
+```
+
+C. Generate an appropriate test dataset, and compute the test errors corresponding to each of the values of `cost` considered. Which value of `cost` leads to the fewest test errors, and how does this compare to the value of `cost` that yields the lowest training errors and the fewest cross-validation errors?
+
+```{r}
+# Generate test data:
+x_test = matrix(rnorm(20*2), ncol=2)
+y_test = c(rep(-1,10), rep(+1, 10))
+x_test[y_test==1,] = x_test[y_test==1,] + 1
+x_test[y_test==1,] = x_test[y_test==1,] + 0.5
+```
+
+```{r}
+dat_test = data.frame(x1 = x_test[,1], x2 = x_test[,2], y = as.factor(y_test))
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=dat_test)
+y_hat = as.numeric(as.character(y_hat)) # Convert factor responses into numerical values
+print(sprintf("Linear SVM test error rate = %10.6f", 1 - sum(y_hat == y)/length(y)))
+```
+
+## Question Seven
+
+In this problem, you will use support vector approaches in order to predict whether a given car gets high or low gas mileage based on the `Auto` dataset. 
+
+A. Create a binary variable that takes on a 1 for cars with gas mileage above the median, and a 0 for cars with gas mileage below the median. 
+
+```{r}
+Auto = na.omit(Auto)
+Auto$name = NULL
+```
+
+```{r}
+if(TRUE){
+  AbvMedian = rep(0, dim(Auto)[1]) # 0 => less than the median of mpg
+  AbvMedian[Auto$mpg > median(Auto$mpg)] = 1 # 1 => greater than the median of mpg
+}else{
+  AbvMedian = rep("LT", dim(Auto)[1])
+  AbvMedian[Auto$mpg > median(Auto$mpg)] = "GT"
+}
+AbvMedian = as.factor(AbvMedian)
+Auto$AbvMedian = AbvMedian
+Auto$mpg = NULL
+```
+
+B. Fit a support vector classifier to the data with various values of `cost`, in order to predict whether a far gets high or low gas mileage. Report the cross-validation errors associated with different values of this parameter. 
+
+```{r}
+tune.out = tune(svm, AbvMedian ~ ., data=Auto, kernel="linear",
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000)))
+print(summary(tune.out)) # Use this output to select the optimal cost value
+```
+
+```{r}
+# Some plots to explore with
+plot(tune.out$best.model, Auto, weight ~ horsepower)
+```
+
+```{r}
+plot(tune.out$best.model, Auto, cylinders ~ year)
+```
+
+```{r}
+plot(tune.out$best.model, Auto, cylinders ~ horsepower)
+```
+
+C. Now repeat (B), but this time using SVMs with radial and polynomial basis kernels, with different values of `gamma`, `degree` and `cost`. 
+
+```{r}
+# Radial Kernel 
+tune.out <- tune(svm, AbvMedian ~ ., data=Auto, kernel="radial",
+                 ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000),
+                               gamma = c(0.5, 1, 2, 3, 4)))
+
+print(summary(tune.out)) # Use this output to select the optimal cost value
+```
+
+```{r}
+plot(tune.out$best.model, Auto, weight ~ horsepower)
+```
+
+```{r}
+plot(tune.out$best.model, Auto, cylinders ~ year)
+```
+
+```{r}
+# Polynomial kernel
+tune.out = tune(svm, AbvMedian ~ ., data=Auto, kernel = "polynomial",
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000),
+                              degree = c(1, 2, 3, 4, 5)))
+print(summary(tune.out)) # Use this output to select the optimal cost value
+```
+
+## Question Eight 
+
+This problem uses the `OJ` dataset which is part of the `ISLR` package. 
+
+A. Create a training set containing a random sample of 800 observations and a test set containing the remaining observations. 
+
+```{r}
+set.seed(0)
+```
+
+```{r}
+n = dim(OJ)[1]
+n_train = 800
+train_inds = sample(1:n, n_train)
+test_inds = (1:n)[-train_inds]
+n_test = length(test_inds)
+```
+
+B. Fit a support vector classifier to the training data using `cost=0.01`, with `Purchase` as the response and the other variables as predictors. Use the `summary()` function to produce summary statistics and describe the results obtained. 
+
+```{r}
+# Use a linear kernel to start with
+svm.fit = svm(Purchase ~ ., data=OJ[train_inds,], kernel="linear",
+              cost = 0.01)
+print(summary(svm.fit))
+```
+
+C. What is the training and test error rates?
+
+```{r}
+# Use this specific SVM to estimate training/testing error rates:
+y_hat = predict(svm.fit, newdata=OJ[train_inds,])
+print(table(predicted = y_hat, truth=OJ[train_inds,]$Purchase))
+print(sprintf("Linear SVM training error rate (cost = 0.01) = %10.6f", 1 - sum(y_hat == OJ[train_inds,]$Purchase)/n_train))
+```
+
+```{r}
+y_hat = predict( svm.fit, newdata=OJ[test_inds,] )
+print( table( predicted=y_hat, truth=OJ[test_inds,]$Purchase ) )
+print( sprintf('Linear SVM testing error rate (cost=0.01)= %10.6f',  1 - sum( y_hat == OJ[test_inds,]$Purchase ) / n_test ) )
+```
+
+D. Use the `tune()` function to select an optimal `cost`. Consider values in the range 0.01 to 10. 
+
+```{r}
+# Use "tune" to select an optimal value for cost when we have a linear kernel:
+tune.out = tune(svm, Purchase ~ ., data=OJ[train_inds,], kernel = "linear",
+                ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000)))
+print(summary(tune.out)) # Use this output to select the optimal cost value
+```
+
+E. Compute the training and test error rates using the new value for `cost`. 
+
+```{r}
+# Predict the performance on training and testing using the best linear model:
+y_hat = predict(tune.out$best.model, newdata=OJ[train_inds,])
+print(table(predicted=y_hat, truth=OJ[train_inds,]$Purchase))
+print(sprintf("Linear SVM training error rate (optimal cost = %.2f) = %10.6f", tune.out$best.model$cost, 1 - sum(y_hat == OJ[train_inds,]$Purchase)/ n_test))
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=OJ[test_inds,])
+print(table(predicted=y_hat, truth=OJ[test_inds,]$Purchase))
+print(sprintf("Linear SVM testing error rate (optimal cost = %.2f) = %10.6f", tune.out$best.model$cost, 1 - sum(y_hat == OJ[test_inds,]$Purchase)/ n_test))
+```
+
+F. Repeat parts (B) through (E) using a support vector machine with a radial kernel. Use the default value for `gamma`. 
+
+```{r}
+tune.out = tune(svm, Purchase ~ ., data=OJ[train_inds,], kernel = "radial",
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000),
+                              gamma = c(0.5, 1, 2, 3, 4)))
+print(summary(tune.out)) # Use this output to select the optimal cost
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=OJ[train_inds,])
+print(table(predicted = y_hat, truth=OJ[train_inds,]$Purchase))
+print(sprintf("Radial SVM training error rate (optimal) = %10.6f", 1 - sum(y_hat == OJ[train_inds,]$Purchase)/n_train))
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=OJ[test_inds,])
+print(table(predicted = y_hat, truth=OJ[test_inds,]$Purchase))
+print(sprintf("Radial SVM training error rate (optimal) = %10.6f", 1 - sum(y_hat == OJ[test_inds,]$Purchase)/n_test))
+```
+
+G. Repeat parts (B) through (E) using a support vector machine with a polynomial kernel. Set `degree=2`.
+
+```{r}
+tune.out = tune( svm, Purchase ~ ., data=OJ[train_inds,], kernel="polynomial", ranges = list( cost=c(0.001, 0.01, 0.1, 1, 5, 10, 100, 1000), degree=c(1, 2, 3) ) )
+print(summary(tune.out)) # Use this output to select the optimal cost value
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=OJ[train_inds,])
+print(table(predicted = y_hat, truth=OJ[train_inds,]$Purchase))
+print(sprintf("Polynomial SVM training error rate (optimal) = %10.6f", 1 - sum(y_hat == OJ[train_inds,]$Purchase)/n_train))
+```
+
+```{r}
+y_hat = predict(tune.out$best.model, newdata=OJ[test_inds,])
+print(table(predicted = y_hat, truth=OJ[test_inds,]$Purchase))
+print(sprintf("Polynomial SVM testing error rate (optimal) = %10.6f", 1 - sum(y_hat == OJ[test_inds,]$Purchase)/n_test))
+```
+
